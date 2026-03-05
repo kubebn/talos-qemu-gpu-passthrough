@@ -1,0 +1,8 @@
+---
+- name: Update GRUB
+  ansible.builtin.command: update-grub
+
+- name: Reboot for IOMMU
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+    msg: "Rebooting to enable IOMMU"

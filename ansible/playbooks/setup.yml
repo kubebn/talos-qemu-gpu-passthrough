@@ -1,0 +1,28 @@
+---
+# Full setup: install packages, configure IOMMU, VFIO/hugepages, distribute configs, install systemd service
+# Usage: ansible-playbook playbooks/setup.yml
+#
+# Prerequisites:
+#   Place Terraform-generated worker YAMLs in ansible/configs/:
+#     - configs/worker-cpu.yaml (for CPU nodes)
+#     - configs/worker-gpu.yaml (for GPU nodes)
+
+- name: Setup Talos QEMU nodes
+  hosts: all
+  become: yes
+  roles:
+    - common
+    - iommu
+
+- name: Configure GPU nodes
+  hosts: gpu_nodes
+  become: yes
+  roles:
+    - vfio
+
+- name: Distribute Talos configs and install QEMU VM service
+  hosts: all
+  become: yes
+  roles:
+    - talos-config
+    - qemu-vm

@@ -1,0 +1,8 @@
+---
+- name: Reboot for hugepages
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+    msg: "Rebooting to apply hugepages and IOMMU passthrough settings"
+
+- name: Update initramfs
+  ansible.builtin.command: update-initramfs -u -k all

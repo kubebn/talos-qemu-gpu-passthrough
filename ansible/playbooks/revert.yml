@@ -1,0 +1,46 @@
+---
+# Revert all nodes to original configuration
+# Usage: ansible-playbook playbooks/revert.yml
+- name: Revert Talos QEMU configuration
+  hosts: all
+  become: yes
+  tasks:
+    - name: Stop VM service
+      ansible.builtin.systemd:
+        name: "talos-qemu@{{ inventory_hostname }}"
+        state: stopped
+      ignore_errors: yes
+
+    - name: Disable VM service
+      ansible.builtin.systemd:
+        name: "talos-qemu@{{ inventory_hostname }}"
+        enabled: no
+      ignore_errors: yes
+
+    - name: Run cleanup
+      ansible.builtin.command: bash {{ talos_qemu_dir }}/clean.sh
+      args:
+        chdir: "{{ talos_qemu_dir }}"
+      ignore_errors: yes
+
+    - name: Run revert
+      ansible.builtin.command: bash {{ talos_qemu_dir }}/revert.sh
+      args:
+        chdir: "{{ talos_qemu_dir }}"
+      ignore_errors: yes
+
+    - name: Remove systemd service
+      ansible.builtin.file:
+        path: /etc/systemd/system/talos-qemu@.service
+        state: absent
+      notify: Reload systemd
+
+    - name: Remove service configs
+      ansible.builtin.file:
+        path: /etc/talos-qemu
+        state: absent
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes

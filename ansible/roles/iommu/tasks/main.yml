@@ -1,0 +1,48 @@
+---
+- name: Detect CPU vendor
+  ansible.builtin.command: grep -m 1 "vendor_id" /proc/cpuinfo
+  register: cpu_vendor_raw
+  changed_when: false
+
+- name: Set IOMMU setting based on CPU vendor
+  ansible.builtin.set_fact:
+    iommu_setting: >-
+      {{ 'intel_iommu=on' if 'GenuineIntel' in cpu_vendor_raw.stdout
+         else 'amd_iommu=on' if 'AuthenticAMD' in cpu_vendor_raw.stdout
+         else '' }}
+
+- name: Fail if unsupported CPU vendor
+  ansible.builtin.fail:
+    msg: "Unsupported CPU vendor. Expected Intel or AMD."
+  when: iommu_setting == ''
+
+- name: Backup GRUB configuration
+  ansible.builtin.copy:
+    src: /etc/default/grub
+    dest: /etc/default/grub.backup
+    remote_src: yes
+    force: no
+
+- name: Check current GRUB settings
+  ansible.builtin.shell: grep "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub
+  register: current_grub
+  changed_when: false
+
+- name: Add IOMMU to GRUB if not present
+  ansible.builtin.replace:
+    path: /etc/default/grub
+    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)"'
+    replace: '\1\2 {{ iommu_setting }}"'
+  when: iommu_setting not in current_grub.stdout
+  notify:
+    - Update GRUB
+    - Reboot for IOMMU
+
+- name: Check if IOMMU is enabled
+  ansible.builtin.shell: find /sys/kernel/iommu_groups/ -type l | wc -l
+  register: iommu_groups
+  changed_when: false
+
+- name: Report IOMMU status
+  ansible.builtin.debug:
+    msg: "IOMMU groups found: {{ iommu_groups.stdout }}. {{ 'IOMMU is active.' if iommu_groups.stdout | int > 0 else 'Reboot required to activate IOMMU.' }}"

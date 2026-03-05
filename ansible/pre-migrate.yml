@@ -1,0 +1,14 @@
+---
+# Pre-migration playbook for existing k3s/Nomad nodes
+# Run ONCE per node before main deployment: ansible-playbook pre-migrate.yml --limit h200-node-X
+#
+# This playbook is ONLY for nodes currently running k3s/Nomad/CephFS.
+# New bare-metal nodes should skip this and go directly to setup.yml.
+#
+# Safety: Use --check --diff for dry-run before actual execution.
+
+- name: Pre-migrate existing k3s/Nomad nodes
+  hosts: gpu_nodes
+  become: yes
+  roles:
+    - pre-migrate

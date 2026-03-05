@@ -1,0 +1,8 @@
+---
+- name: Apply netplan
+  ansible.builtin.command: netplan apply
+
+- name: Apply netplan safely
+  ansible.builtin.shell: |
+    netplan try --timeout 30
+  ignore_errors: yes

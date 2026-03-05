@@ -1,0 +1,27 @@
+---
+- name: Install systemd service template
+  ansible.builtin.copy:
+    src: "{{ talos_qemu_dir }}/systemd/talos-qemu@.service"
+    dest: /etc/systemd/system/talos-qemu@.service
+    remote_src: yes
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create service config directory
+  ansible.builtin.file:
+    path: /etc/talos-qemu
+    state: directory
+    mode: "0755"
+
+- name: Create VM instance config
+  ansible.builtin.template:
+    src: vm-instance.conf.j2
+    dest: "/etc/talos-qemu/{{ inventory_hostname }}.conf"
+    mode: "0644"
+  notify: Restart VM service
+
+- name: Enable VM service
+  ansible.builtin.systemd:
+    name: "talos-qemu@{{ inventory_hostname }}"
+    enabled: yes
+    daemon_reload: yes

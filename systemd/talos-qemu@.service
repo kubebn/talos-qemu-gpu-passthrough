@@ -1,0 +1,29 @@
+[Unit]
+Description=Talos QEMU VM - %i
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/kubebn/talos-qemu-gpu-passthrough
+
+[Service]
+Type=forking
+EnvironmentFile=/etc/talos-qemu/%i.conf
+WorkingDirectory=${WORKING_DIR}
+PIDFile=${WORKING_DIR}/.worker/qemu-worker-vm.pid
+
+ExecStart=/bin/bash ${WORKING_DIR}/start.sh --ip ${VM_IP} --gpu ${GPU_PASSTHROUGH} --disk-force false --fabric ${FABRIC} --hostname ${VM_HOSTNAME}
+
+ExecStop=/bin/bash ${WORKING_DIR}/clean.sh
+
+# Graceful shutdown timeout (matches the 30s in clean.sh + buffer)
+TimeoutStopSec=45
+
+Restart=on-failure
+RestartSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=talos-qemu-%i
+
+[Install]
+WantedBy=multi-user.target

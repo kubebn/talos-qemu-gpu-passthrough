@@ -1,0 +1,121 @@
+---
+# Pre-migration tasks for nodes currently running k3s + Nomad + CephFS
+# Each task is idempotent and can be re-run safely
+
+- name: Check if Nomad is installed
+  ansible.builtin.command: which nomad
+  register: nomad_check
+  changed_when: false
+  failed_when: false
+
+- name: Stop and disable Nomad agent
+  ansible.builtin.systemd:
+    name: nomad
+    state: stopped
+    enabled: no
+  when: nomad_check.rc == 0
+  ignore_errors: yes
+
+- name: Check if k3s-agent is installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s-agent.service
+  register: k3s_agent_check
+
+- name: Check if k3s server is installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s.service
+  register: k3s_server_check
+
+- name: Drain k3s node
+  ansible.builtin.shell: |
+    k3s kubectl drain $(hostname) --ignore-daemonsets --delete-emptydir-data --timeout=120s || true
+  when: k3s_agent_check.stat.exists or k3s_server_check.stat.exists
+  ignore_errors: yes
+
+- name: Stop and disable k3s agent
+  ansible.builtin.systemd:
+    name: k3s-agent
+    state: stopped
+    enabled: no
+  when: k3s_agent_check.stat.exists
+  ignore_errors: yes
+
+- name: Stop and disable k3s server
+  ansible.builtin.systemd:
+    name: k3s
+    state: stopped
+    enabled: no
+  when: k3s_server_check.stat.exists
+  ignore_errors: yes
+
+- name: Check CephFS mounts
+  ansible.builtin.shell: mount | grep ceph
+  register: ceph_mounts
+  changed_when: false
+  failed_when: false
+
+- name: Unmount CephFS
+  ansible.builtin.shell: umount /mnt/cephfs
+  when: ceph_mounts.rc == 0
+  ignore_errors: yes
+
+- name: Remove CephFS from fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '.*ceph.*'
+    state: absent
+  when: ceph_mounts.rc == 0
+
+- name: Find netplan configs with bonds (excluding management)
+  ansible.builtin.find:
+    paths: /etc/netplan
+    patterns: "*.yaml,*.yml"
+    contains: ".*bond.*"
+  register: bond_netplan_files
+
+- name: Remove netplan bond configs (intranet/storage NICs will be passed through)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ bond_netplan_files.files }}"
+  when: "'eno1' not in item.path"
+  notify: Apply netplan
+
+- name: Create bridge netplan config for QEMU VM networking
+  ansible.builtin.copy:
+    dest: /etc/netplan/99-bridge.yaml
+    mode: "0600"
+    content: |
+      network:
+        version: 2
+        bridges:
+          br0:
+            interfaces: []
+            addresses:
+              - 192.168.100.1/24
+            dhcp4: no
+  notify: Apply netplan safely
+
+- name: Clean up k3s container images
+  ansible.builtin.shell: k3s crictl rmi --prune
+  when: k3s_agent_check.stat.exists or k3s_server_check.stat.exists
+  ignore_errors: yes
+
+- name: Remove k3s data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/rancher/k3s
+    - /etc/rancher/k3s
+  tags: [cleanup]
+
+- name: Remove Nomad data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /opt/nomad
+    - /etc/nomad.d
+  when: nomad_check.rc == 0
+  tags: [cleanup]

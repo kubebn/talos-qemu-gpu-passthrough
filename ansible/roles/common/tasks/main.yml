@@ -1,0 +1,52 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Enable IP forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_set: yes
+    state: present
+    reload: yes
+
+- name: Disable cloud-init
+  ansible.builtin.file:
+    path: /etc/cloud/cloud-init.disabled
+    state: touch
+    modification_time: preserve
+    access_time: preserve
+
+- name: Backup iptables rules
+  ansible.builtin.shell: iptables-save > {{ talos_qemu_dir }}/iptables_bckp
+  args:
+    creates: "{{ talos_qemu_dir }}/iptables_bckp"
+
+- name: Ensure working directory exists
+  ansible.builtin.file:
+    path: "{{ talos_qemu_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Sync scripts to working directory
+  ansible.builtin.synchronize:
+    src: "{{ playbook_dir }}/../"
+    dest: "{{ talos_qemu_dir }}/"
+    rsync_opts:
+      - "--exclude=ansible"
+      - "--exclude=.git"
+      - "--exclude=rom-parser"
+      - "--exclude=.gpu_roms"
+      - "--exclude=.worker"
+      - "--exclude=.dnsmasq"
+      - "--exclude=.build"
+      - "--exclude=.iso"

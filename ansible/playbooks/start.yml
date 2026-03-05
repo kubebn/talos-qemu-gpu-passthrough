@@ -1,0 +1,11 @@
+---
+# Start VMs on all nodes
+# Usage: ansible-playbook playbooks/start.yml
+- name: Start Talos QEMU VMs
+  hosts: all
+  become: yes
+  tasks:
+    - name: Start VM service
+      ansible.builtin.systemd:
+        name: "talos-qemu@{{ inventory_hostname }}"
+        state: started

@@ -1,0 +1,69 @@
+---
+# Distributes pre-generated Talos worker configs to each bare metal host
+# Worker YAMLs are provided externally (e.g., from Terraform) and placed in ansible/configs/
+#
+# Expected files:
+#   ansible/configs/worker-cpu.yaml  — for CPU nodes
+#   ansible/configs/worker-gpu.yaml  — for GPU nodes
+#
+# Per-host override: set 'worker_yaml' in inventory to use a custom file per host
+
+- name: Create ISO directory on host
+  ansible.builtin.file:
+    path: "{{ talos_qemu_dir }}/.iso"
+    state: directory
+    mode: "0755"
+
+- name: Determine worker config file
+  ansible.builtin.set_fact:
+    worker_config_file: >-
+      {{ worker_yaml | default(
+           (gpu_passthrough | default(false)) | ternary('worker-gpu.yaml', 'worker-cpu.yaml')
+         ) }}
+
+- name: Check worker config exists locally
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../configs/{{ worker_config_file }}"
+  delegate_to: localhost
+  become: no
+  register: worker_config_stat
+
+- name: Fail if worker config not found
+  ansible.builtin.fail:
+    msg: |
+      Worker config not found: ansible/configs/{{ worker_config_file }}
+      Place your Terraform-generated worker YAML in ansible/configs/ directory.
+      Expected: ansible/configs/worker-cpu.yaml and/or ansible/configs/worker-gpu.yaml
+      Or set 'worker_yaml' per-host in inventory for custom filenames.
+  when: not worker_config_stat.stat.exists
+
+- name: Copy worker config to host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../configs/{{ worker_config_file }}"
+    dest: "{{ talos_qemu_dir }}/{{ worker_config_file }}"
+    mode: "0644"
+
+- name: Set as active config for VM ISO
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../configs/{{ worker_config_file }}"
+    dest: "{{ talos_qemu_dir }}/.iso/config.yaml"
+    mode: "0644"
+
+- name: Render per-node network patch
+  ansible.builtin.template:
+    src: network-patch.yaml.j2
+    dest: "{{ talos_qemu_dir }}/.iso/network-patch.yaml"
+    mode: "0644"
+  when: node_id is defined
+
+- name: Append network patch to config
+  ansible.builtin.shell: |
+    echo "---" >> {{ talos_qemu_dir }}/.iso/config.yaml
+    cat {{ talos_qemu_dir }}/.iso/network-patch.yaml >> {{ talos_qemu_dir }}/.iso/config.yaml
+  when: node_id is defined
+
+- name: Generate config ISO
+  ansible.builtin.command: >
+    mkisofs -joliet -rock -volid 'metal-iso'
+    -output {{ talos_qemu_dir }}/.worker/config.iso
+    {{ talos_qemu_dir }}/.iso/

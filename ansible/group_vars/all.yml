@@ -1,0 +1,46 @@
+# Shared configuration for all nodes
+talos_qemu_dir: /opt/talos-qemu-gpu-passthrough
+talos_image_url: ""  # Set to URL or leave empty to use local .build/metal-amd64.qcow2
+
+# DNS servers for dnsmasq
+dns_servers:
+  - 1.1.1.1
+  - 1.0.0.1
+
+# Packages to install on all nodes
+common_packages:
+  - qemu-system-x86
+  - qemu-kvm
+  - qemu-utils
+  - virt-manager
+  - libvirt-daemon-system
+  - libvirt-clients
+  - dnsmasq
+  - bridge-utils
+  - ovmf
+  - genisoimage
+  - qemu-efi-aarch64
+  - socat
+  - pciutils
+
+# Host RAM reservation (percentage)
+host_ram_reserve_pct: 5
+
+# VM CPU allocation (percentage of physical cores)
+vm_cpu_pct: 95
+
+# VM disk usage (percentage of available disk)
+vm_disk_pct: 80
+
+# NUMA topology
+numa_nodes: 4
+host_cpu_reserve: 4
+
+# Network defaults for H200 nodes
+intranet_gateway: 10.2.1.254
+storage_gateway: 10.3.1.254
+intranet_prefix: 24
+storage_prefix: 24
+
+# SSH key for Novita nodes
+ansible_ssh_private_key_file: "{{ playbook_dir }}/../id_rsa_novita.txt"

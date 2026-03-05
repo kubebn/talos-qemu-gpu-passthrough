@@ -1,0 +1,11 @@
+---
+# Stop VMs on all nodes (graceful shutdown)
+# Usage: ansible-playbook playbooks/stop.yml
+- name: Stop Talos QEMU VMs
+  hosts: all
+  become: yes
+  tasks:
+    - name: Stop VM service
+      ansible.builtin.systemd:
+        name: "talos-qemu@{{ inventory_hostname }}"
+        state: stopped

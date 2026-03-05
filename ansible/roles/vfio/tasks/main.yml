@@ -1,0 +1,65 @@
+---
+- name: Calculate hugepages
+  ansible.builtin.shell: |
+    TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+    RESERVED_RAM_MB=$((TOTAL_RAM_MB * {{ host_ram_reserve_pct }} / 100))
+    HUGE_PAGES=$(((TOTAL_RAM_MB - RESERVED_RAM_MB) / 1024))
+    echo $HUGE_PAGES
+  register: hugepages_calc
+  changed_when: false
+
+- name: Set hugepages fact
+  ansible.builtin.set_fact:
+    huge_pages: "{{ hugepages_calc.stdout | trim }}"
+
+- name: Check current GRUB settings
+  ansible.builtin.shell: grep "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub
+  register: current_grub
+  changed_when: false
+
+- name: Configure GRUB for hugepages and IOMMU passthrough
+  ansible.builtin.shell: |
+    CURRENT=$(grep "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub | sed -E 's/^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"$/\1/')
+    CLEANED=$(echo "$CURRENT" | sed -E 's/vfio-pci\.ids=[^ ]*//g; s/module_blacklist=[^ ]*//g; s/video=efifb:off//g; s/iommu=pt//g; s/pcie_aspm=off//g; s/default_hugepagesz=[^ ]*//g; s/hugepagesz=[^ ]*//g; s/hugepages=[^ ]*//g; s/  +/ /g; s/^ //; s/ $//')
+    NEW="$CLEANED iommu=pt pcie_aspm=off default_hugepagesz=1G hugepagesz=1G hugepages={{ huge_pages }}"
+    sed -i -E "s|^GRUB_CMDLINE_LINUX_DEFAULT=\".*\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW\"|" /etc/default/grub
+    update-grub
+  when: "'hugepages=' ~ huge_pages not in current_grub.stdout or 'iommu=pt' not in current_grub.stdout"
+  notify: Reboot for hugepages
+
+- name: Ensure vfio modules in /etc/modules
+  ansible.builtin.lineinfile:
+    path: /etc/modules
+    line: "{{ item }}"
+    state: present
+  loop:
+    - vfio
+    - vfio_iommu_type1
+    - vfio_pci
+
+- name: Remove legacy initramfs vfio.sh
+  ansible.builtin.file:
+    path: /etc/initramfs-tools/scripts/init-top/vfio.sh
+    state: absent
+  notify: Update initramfs
+
+- name: Remove legacy vfio.conf
+  ansible.builtin.file:
+    path: /etc/modprobe.d/vfio.conf
+    state: absent
+  notify: Update initramfs
+
+- name: Run PCI device scanner
+  ansible.builtin.command: python3 {{ talos_qemu_dir }}/pci-passthrough.py
+  args:
+    chdir: "{{ talos_qemu_dir }}"
+  changed_when: false
+
+- name: Run GPU ROM check
+  ansible.builtin.shell: |
+    cd {{ talos_qemu_dir }}
+    bash gpu-node.sh
+  args:
+    creates: "{{ talos_qemu_dir }}/.gpu_roms"
+  when: gpu_passthrough | default(false)
+  ignore_errors: yes
