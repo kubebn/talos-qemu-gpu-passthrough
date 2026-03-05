@@ -252,7 +252,7 @@ QEMU_CMD="sudo qemu-system-x86_64 \
   -uuid $VM_UUID \
   -m ${VM_MEMORY}G \
   -smp $VM_CPUS,sockets=$SOCKETS,cores=$((VM_CPUS / SOCKETS / 2)),threads=2 \
-  -cpu host,+x2apic,+invtsc \
+  -cpu host,+x2apic,+invtsc,host-cache-info=on \
   -machine q35,accel=kvm,kernel_irqchip=split \
   -overcommit mem-lock=on \
   -enable-kvm \
@@ -261,8 +261,8 @@ QEMU_CMD="sudo qemu-system-x86_64 \
   -pidfile ${PWD}/.worker/qemu-worker-vm.pid \
   -serial file:${PWD}/.worker/qemu-worker-vm-console.log \
   -cdrom ${PWD}/.worker/config.iso \
-  -device \"virtio-net-pci,netdev=workertap,mac=$VM_MAC\" \
-  -netdev \"tap,id=workertap,ifname=workertap,script=no,downscript=no\" \
+  -device \"virtio-net-pci,netdev=workertap,mac=$VM_MAC,mq=on,vectors=10\" \
+  -netdev \"tap,id=workertap,ifname=workertap,script=no,downscript=no,queues=4\" \
   -device virtio-rng-pci \
   -monitor unix:${PWD}/.worker/worker.monitor,server,nowait \
   -boot order=cn,reboot-timeout=5000 \

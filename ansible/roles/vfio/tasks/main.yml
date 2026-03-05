@@ -12,6 +12,28 @@
   ansible.builtin.set_fact:
     huge_pages: "{{ hugepages_calc.stdout | trim }}"
 
+- name: Calculate per-NUMA hugepage allocation
+  ansible.builtin.shell: |
+    NUMA_COUNT=$(lscpu | grep "^NUMA node(s):" | awk '{print $NF}')
+    TOTAL={{ huge_pages }}
+    if [ "$NUMA_COUNT" -gt 1 ]; then
+      PER_NUMA=$((TOTAL / NUMA_COUNT))
+      RESULT=""
+      for ((n=0; n<NUMA_COUNT; n++)); do
+        [ -n "$RESULT" ] && RESULT+=","
+        RESULT+="${n}:${PER_NUMA}"
+      done
+      echo "$RESULT"
+    else
+      echo "$TOTAL"
+    fi
+  register: hugepages_param
+  changed_when: false
+
+- name: Set hugepages param fact
+  ansible.builtin.set_fact:
+    hugepages_grub: "{{ hugepages_param.stdout | trim }}"
+
 - name: Check current GRUB settings
   ansible.builtin.shell: grep "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub
   register: current_grub
@@ -21,10 +43,10 @@
   ansible.builtin.shell: |
     CURRENT=$(grep "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub | sed -E 's/^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"$/\1/')
     CLEANED=$(echo "$CURRENT" | sed -E 's/vfio-pci\.ids=[^ ]*//g; s/module_blacklist=[^ ]*//g; s/video=efifb:off//g; s/iommu=pt//g; s/pcie_aspm=off//g; s/default_hugepagesz=[^ ]*//g; s/hugepagesz=[^ ]*//g; s/hugepages=[^ ]*//g; s/  +/ /g; s/^ //; s/ $//')
-    NEW="$CLEANED iommu=pt pcie_aspm=off default_hugepagesz=1G hugepagesz=1G hugepages={{ huge_pages }}"
+    NEW="$CLEANED iommu=pt pcie_aspm=off default_hugepagesz=1G hugepagesz=1G hugepages={{ hugepages_grub }}"
     sed -i -E "s|^GRUB_CMDLINE_LINUX_DEFAULT=\".*\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$NEW\"|" /etc/default/grub
     update-grub
-  when: "'hugepages=' ~ huge_pages not in current_grub.stdout or 'iommu=pt' not in current_grub.stdout"
+  when: "'hugepages=' ~ hugepages_grub not in current_grub.stdout or 'iommu=pt' not in current_grub.stdout"
   notify: Reboot for hugepages
 
 - name: Ensure vfio modules in /etc/modules

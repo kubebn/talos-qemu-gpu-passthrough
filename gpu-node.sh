@@ -58,9 +58,24 @@ echo "Total RAM: $((TOTAL_RAM_MB / 1024)) GB"
 echo "Reserved RAM for host: $RESERVED_RAM_GB GB"
 echo "Calculated hugepages: $HUGE_PAGES"
 
-# GRUB configuration: only IOMMU passthrough mode and hugepages
+# Distribute hugepages evenly across NUMA nodes for balanced allocation
+# Format: hugepages=0:N,1:N,2:N,3:N ensures each NUMA node gets its share at boot
+NUMA_COUNT=$(lscpu | grep "^NUMA node(s):" | awk '{print $NF}' 2>/dev/null)
+if [ -n "$NUMA_COUNT" ] && [ "$NUMA_COUNT" -gt 1 ]; then
+    PER_NUMA=$((HUGE_PAGES / NUMA_COUNT))
+    HUGEPAGES_PARAM=""
+    for ((n=0; n<NUMA_COUNT; n++)); do
+        [ -n "$HUGEPAGES_PARAM" ] && HUGEPAGES_PARAM+=","
+        HUGEPAGES_PARAM+="${n}:${PER_NUMA}"
+    done
+    echo "Per-NUMA hugepage allocation: $HUGEPAGES_PARAM"
+else
+    HUGEPAGES_PARAM="$HUGE_PAGES"
+fi
+
+# GRUB configuration: IOMMU passthrough, PCIe ASPM off, hugepages
 # No module_blacklist=nvidia, no vfio-pci.ids — GPU binding is done at runtime by start.sh
-NEW_SETTINGS="iommu=pt pcie_aspm=off default_hugepagesz=1G hugepagesz=1G hugepages=$HUGE_PAGES"
+NEW_SETTINGS="iommu=pt pcie_aspm=off default_hugepagesz=1G hugepagesz=1G hugepages=$HUGEPAGES_PARAM"
 
 # Path to the GRUB configuration file
 GRUB_CONFIG="/etc/default/grub"
