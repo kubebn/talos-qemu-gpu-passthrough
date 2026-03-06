@@ -78,10 +78,9 @@
   changed_when: false
 
 - name: Run GPU ROM check
-  ansible.builtin.shell: |
-    cd {{ talos_qemu_dir }}
-    bash gpu-node.sh
+  ansible.builtin.command: bash {{ talos_qemu_dir }}/gpu-rom-check.sh
   args:
+    chdir: "{{ talos_qemu_dir }}"
     creates: "{{ talos_qemu_dir }}/.gpu_roms"
   when: gpu_passthrough | default(false)
   ignore_errors: yes

@@ -23,10 +23,33 @@
         chdir: "{{ talos_qemu_dir }}"
       ignore_errors: yes
 
-    - name: Run revert
-      ansible.builtin.command: bash {{ talos_qemu_dir }}/revert.sh
-      args:
-        chdir: "{{ talos_qemu_dir }}"
+    - name: Remove legacy initramfs vfio.sh
+      ansible.builtin.file:
+        path: /etc/initramfs-tools/scripts/init-top/vfio.sh
+        state: absent
+
+    - name: Remove legacy vfio.conf
+      ansible.builtin.file:
+        path: /etc/modprobe.d/vfio.conf
+        state: absent
+
+    - name: Restore GRUB from backup
+      ansible.builtin.shell: |
+        if [ -f /etc/default/grub.backup ]; then
+          cp /etc/default/grub.backup /etc/default/grub
+          update-grub
+        fi
+      ignore_errors: yes
+
+    - name: Update initramfs
+      ansible.builtin.command: update-initramfs -u -k all
+      ignore_errors: yes
+
+    - name: Restore iptables from backup
+      ansible.builtin.shell: |
+        if [ -f {{ talos_qemu_dir }}/iptables_bckp ]; then
+          iptables-restore < {{ talos_qemu_dir }}/iptables_bckp
+        fi
       ignore_errors: yes
 
     - name: Remove systemd service

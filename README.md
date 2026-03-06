@@ -46,10 +46,7 @@ Each bare metal host runs one QEMU VM containing a Talos Linux worker. All GPUs,
 ├── start.sh                  # Launch QEMU VM with full device passthrough + NUMA
 ├── clean.sh                  # Graceful shutdown, unbind all VFIO devices
 ├── pin-vcpus.sh              # Pin vCPU threads to physical CPUs (NUMA-aware)
-├── gpu-node.sh               # One-time host setup (hugepages, IOMMU, VFIO, ROM check)
-├── cpu-node.sh               # Host setup for CPU-only VMs
-├── enable-iommu.sh           # Enable IOMMU in GRUB (one-time, requires reboot)
-├── revert.sh                 # Restore host to original state
+├── gpu-rom-check.sh          # Check GPU ROMs for UEFI compatibility
 ├── pci-passthrough.py        # Scan PCI + NVMe devices, generate lspci.txt
 │
 ├── checks/
@@ -88,7 +85,7 @@ Each bare metal host runs one QEMU VM containing a Talos Linux worker. All GPUs,
 
 GPU binding happens **at runtime** when the VM starts, not at boot:
 
-1. **One-time setup** (single reboot): `gpu-node.sh` configures IOMMU, hugepages, and `pcie_aspm=off` in GRUB
+1. **One-time setup** (single reboot): Ansible configures IOMMU, hugepages, and `pcie_aspm=off` in GRUB
 2. **VM start** (no reboot): `start.sh` unbinds devices from their drivers and binds to vfio-pci using `driver_override`
 3. **VM stop** (no reboot): `clean.sh` unbinds from vfio-pci, clears `driver_override`, reprobes original drivers
 
@@ -113,22 +110,11 @@ NVMe detection uses **size-based filtering** (not device IDs) to avoid accidenta
 
 ---
 
-## Quick Start (Single Host)
+## Quick Start
 
-### 1. Prepare the host
+Host setup (IOMMU, hugepages, VFIO, GRUB) is handled exclusively by Ansible. See the [Ansible Usage Guide](ansible/README.md).
 
-```bash
-# Enable IOMMU (one-time, reboots)
-sudo ./enable-iommu.sh
-
-# After reboot: scan PCI devices
-python3 pci-passthrough.py
-
-# Configure hugepages, VFIO, GRUB (may reboot for GRUB changes)
-sudo ./gpu-node.sh
-```
-
-### 2. Dry-run
+### 1. Dry-run
 
 ```bash
 ./start.sh --ip 192.168.100.2 --gpu true --fabric true --hostname io-worker-1 --dry-run
@@ -136,13 +122,13 @@ sudo ./gpu-node.sh
 
 Review the QEMU command: check NUMA backends, `-smp` topology, all `-device vfio-pci` entries.
 
-### 3. Start the VM
+### 2. Start the VM
 
 ```bash
 ./start.sh --ip 192.168.100.2 --gpu true --fabric true --hostname io-worker-1
 ```
 
-### 4. Verify
+### 3. Verify
 
 ```bash
 # Console output
@@ -153,7 +139,7 @@ talosctl -n 192.168.100.2 get links | grep bond
 talosctl -n 192.168.100.2 dmesg | grep -i nvidia
 ```
 
-### 5. Stop
+### 4. Stop
 
 ```bash
 ./clean.sh
@@ -180,7 +166,7 @@ Launches a QEMU VM with full H200 passthrough and NUMA topology.
 **What it does:**
 1. Creates bridge (`br0`) and TAP (`workertap`) interfaces
 2. Starts dnsmasq for DHCP/DNS
-3. Configures iptables NAT/forwarding + KubeSpan port forwarding (51820 UDP)
+3. Configures iptables NAT/forwarding + port forwarding (KubeSpan 51820/UDP, HTTP 80, HTTPS 443, Talos API 50000, K8s API 6443)
 4. Copies and resizes Talos disk image
 5. **GPU nodes:** Binds all passthrough devices to vfio-pci at runtime via `driver_override`
 6. Builds QEMU command with:
@@ -306,6 +292,33 @@ ansible-playbook -i inventory/hosts.yml playbooks/revert.yml --limit h200-node-4
 - 4x ConnectX-7 Ethernet
 - 8x 3.5TB NVMe (data, passed through to VM)
 - 2x 894GB NVMe (RAID1 host boot, NOT passed through)
+
+---
+
+## Networking & Ingress
+
+VMs use NAT networking. The host forwards specific ports from its public IP to the VM:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 51820 | UDP | KubeSpan (WireGuard) — cluster connectivity |
+| 80 | TCP | HTTP ingress |
+| 443 | TCP | HTTPS ingress |
+| 50000 | TCP | Talos API (`talosctl`) |
+| 6443 | TCP | Kubernetes API |
+
+**Ingress setup:**
+
+1. Deploy an ingress controller (e.g., nginx-ingress) as a DaemonSet with `hostPort: 80` and `hostPort: 443`
+2. Traffic flow: `internet → host:443 → NAT → VM:443 → ingress pod (hostPort) → K8s service → pod`
+3. Each node's public IP is stored as annotation `shadeform.io/public-ip` (set via Talos machine config)
+
+**ExternalIP:** VMs behind NAT don't have public IPs on their interfaces, so Kubernetes `ExternalIP` field won't auto-populate. For services requiring ExternalIP, use MetalLB in L2 mode with the VM's bridge subnet, or use NodePort services with the NAT port forwarding.
+
+**Verify port forwarding:**
+```bash
+sudo iptables -t nat -L PREROUTING -n | grep DNAT
+```
 
 ---
 

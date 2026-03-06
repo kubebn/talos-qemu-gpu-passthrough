@@ -62,8 +62,23 @@ routes:
 {% endif %}
 ---
 apiVersion: v1alpha1
+kind: HostnameConfig
+hostname: io-worker-{{ node_id | default(inventory_hostname) }}
+auto: off
+---
+apiVersion: v1alpha1
 kind: MachineConfig
 spec:
   machine:
-    network:
-      hostname: io-worker-{{ node_id | default(inventory_hostname) }}
+    kubelet:
+      nodeIP:
+        validSubnets:
+          - {{ intranet_ip }}/32
+    nodeLabels:
+      topology.kubernetes.io/zone: "rack-1"
+      shadeform.io/node-type: "gpu"
+      shadeform.io/gpu-model: "h200"
+{% if public_ip is defined %}
+    nodeAnnotations:
+      shadeform.io/public-ip: "{{ public_ip }}"
+{% endif %}

@@ -12,7 +12,7 @@ FORCE_CREATE_DISK=true
 FABRIC=false
 DRY_RUN=false
 VM_HOSTNAME=""
-host_cpu_reserve=4
+host_cpu_reserve=${HOST_CPU_RESERVE:-4}
 
 # Parse flags
 while [[ "$#" -gt 0 ]]; do
@@ -90,7 +90,7 @@ else
 fi
 
 if ! ip link show workertap &>/dev/null; then
-    sudo ip tuntap add workertap mode tap
+    sudo ip tuntap add workertap mode tap multi_queue
     sudo ip link set workertap up
     sudo ip link set workertap master br0
 else
@@ -134,9 +134,10 @@ dhcp-lease-max=25
 dhcp-host=$VM_MAC,$VM_IP,$VM_HOSTNAME
 EOF
 
-# Start dnsmasq using the configuration file in the dnsmasq directory
-sudo dnsmasq --no-daemon --conf-file="$DNSMASQ_DIR/dnsmasq.conf" > "$DNSMASQ_DIR/dnsmasq.log" 2>&1 &
-echo $! > "$DNSMASQ_DIR/dnsmasq.pid"
+# Start dnsmasq (daemonizes on its own, writes its own PID file)
+sudo dnsmasq --conf-file="$DNSMASQ_DIR/dnsmasq.conf" \
+  --pid-file="$DNSMASQ_DIR/dnsmasq.pid" \
+  --log-facility="$DNSMASQ_DIR/dnsmasq.log"
 
 # Configure iptables
 
@@ -168,6 +169,12 @@ RULES
 # KubeSpan/Kilo wg tunnel
 sudo iptables -t nat -A PREROUTING -p udp -d $PUBLIC_IP --dport 51820 -i $MAIN_INTERFACE -j DNAT --to-destination $VM_IP:51820
 echo "-A PREROUTING -p udp -d $PUBLIC_IP --dport 51820 -i $MAIN_INTERFACE -j DNAT --to-destination $VM_IP:51820" >> "$IPTABLES_NAT_RULES_FILE"
+
+# Ingress ports (HTTP/HTTPS) — forward from host public IP to VM for NodePort/LoadBalancer services
+sudo iptables -t nat -A PREROUTING -p tcp -d $PUBLIC_IP --dport 80 -i $MAIN_INTERFACE -j DNAT --to-destination $VM_IP:80
+echo "-A PREROUTING -p tcp -d $PUBLIC_IP --dport 80 -i $MAIN_INTERFACE -j DNAT --to-destination $VM_IP:80" >> "$IPTABLES_NAT_RULES_FILE"
+sudo iptables -t nat -A PREROUTING -p tcp -d $PUBLIC_IP --dport 443 -i $MAIN_INTERFACE -j DNAT --to-destination $VM_IP:443
+echo "-A PREROUTING -p tcp -d $PUBLIC_IP --dport 443 -i $MAIN_INTERFACE -j DNAT --to-destination $VM_IP:443" >> "$IPTABLES_NAT_RULES_FILE"
 
 TALOS_IMAGE_FILE="${PWD}/.build/metal-amd64.qcow2"
 VM_DISK_FILE="${PWD}/.worker/worker-main.qcow2"
@@ -204,15 +211,26 @@ VM_CPUS=$((TOTAL_CPUS - host_cpu_reserve))
 if [ "$VM_CPUS" -lt 1 ]; then
     VM_CPUS=1
 fi
+# Round down to nearest (SOCKETS * threads) to avoid -smp topology mismatch
+SMP_UNIT=$((SOCKETS * 2))
+VM_CPUS=$(( (VM_CPUS / SMP_UNIT) * SMP_UNIT ))
+if [ "$VM_CPUS" -lt "$SMP_UNIT" ]; then
+    VM_CPUS=$SMP_UNIT
+fi
 
 # Check if OVMF is installed, set UEFI configuration
 if [ -f /usr/share/ovmf/OVMF.fd ]; then
     cp /usr/share/ovmf/OVMF.fd ${PWD}/.worker/worker-flash.img
-    dd if=/dev/zero of=${PWD}/.worker/efi-vars.raw bs=1M count=3
+    # Copy template vars file if available, otherwise create correctly-sized empty one
+    if [ -f /usr/share/OVMF/OVMF_VARS.fd ]; then
+        cp /usr/share/OVMF/OVMF_VARS.fd ${PWD}/.worker/efi-vars.raw
+    else
+        dd if=/dev/zero of=${PWD}/.worker/efi-vars.raw bs=1M count=4
+    fi
     OVMF_DRIVES="-drive if=pflash,format=raw,readonly=on,file=${PWD}/.worker/worker-flash.img \
                  -drive if=pflash,format=raw,file=${PWD}/.worker/efi-vars.raw"
 else
-    echo "qemu-efi-aarch64 is not installed. Skipping OVMF configuration."
+    echo "OVMF is not installed. Skipping UEFI configuration."
     OVMF_DRIVES=""
 fi
 
@@ -253,7 +271,7 @@ QEMU_CMD="sudo qemu-system-x86_64 \
   -m ${VM_MEMORY}G \
   -smp $VM_CPUS,sockets=$SOCKETS,cores=$((VM_CPUS / SOCKETS / 2)),threads=2 \
   -cpu host,+x2apic,+invtsc,host-cache-info=on \
-  -machine q35,accel=kvm,kernel_irqchip=split \
+  -machine q35,accel=kvm,kernel_irqchip=on \
   -overcommit mem-lock=on \
   -enable-kvm \
   -display none \
@@ -262,7 +280,7 @@ QEMU_CMD="sudo qemu-system-x86_64 \
   -serial file:${PWD}/.worker/qemu-worker-vm-console.log \
   -cdrom ${PWD}/.worker/config.iso \
   -device \"virtio-net-pci,netdev=workertap,mac=$VM_MAC,mq=on,vectors=10\" \
-  -netdev \"tap,id=workertap,ifname=workertap,script=no,downscript=no,queues=4\" \
+  -netdev \"tap,id=workertap,ifname=workertap,script=no,downscript=no,queues=4,vhost=on\" \
   -device virtio-rng-pci \
   -monitor unix:${PWD}/.worker/worker.monitor,server,nowait \
   -boot order=cn,reboot-timeout=5000 \
@@ -271,7 +289,8 @@ QEMU_CMD="sudo qemu-system-x86_64 \
   -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
   -device i6300esb,id=watchdog0 \
   -watchdog-action pause \
-  -drive file=$VM_DISK_FILE,if=virtio,media=disk,index=0,cache=writeback,discard=ignore,format=qcow2"
+  -vga none \
+  -drive file=$VM_DISK_FILE,if=virtio,media=disk,index=0,cache=none,aio=io_uring,format=qcow2"
 
 # Hugepages / NUMA memory configuration
 HUGEPAGES_PATH="/dev/hugepages"
@@ -372,9 +391,9 @@ if [ "$IS_GPU_NODE" = true ]; then
         QEMU_CMD+=" -device pcie-root-port,id=$ROOT_PORT_ID,port=$PORT_HEX,chassis=$PORT_INDEX,slot=$PORT_INDEX,bus=pcie.0"
 
         if [[ -f "$BAD_ROM_FILE" ]]; then
-            QEMU_CMD+=" -device vfio-pci,host=$dev,bus=$ROOT_PORT_ID,multifunction=on,romfile=${GPU_ROMS_DIR}/good_gpu.rom"
+            QEMU_CMD+=" -device vfio-pci,host=$dev,bus=$ROOT_PORT_ID,multifunction=on,x-vga=off,romfile=${GPU_ROMS_DIR}/good_gpu.rom"
         else
-            QEMU_CMD+=" -device vfio-pci,host=$dev,bus=$ROOT_PORT_ID,multifunction=on,rombar=0"
+            QEMU_CMD+=" -device vfio-pci,host=$dev,bus=$ROOT_PORT_ID,multifunction=on,x-vga=off,rombar=0"
         fi
     done
 

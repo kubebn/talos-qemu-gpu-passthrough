@@ -26,12 +26,6 @@
     path: /etc/systemd/system/k3s.service
   register: k3s_server_check
 
-- name: Drain k3s node
-  ansible.builtin.shell: |
-    k3s kubectl drain $(hostname) --ignore-daemonsets --delete-emptydir-data --timeout=120s || true
-  when: k3s_agent_check.stat.exists or k3s_server_check.stat.exists
-  ignore_errors: yes
-
 - name: Stop and disable k3s agent
   ansible.builtin.systemd:
     name: k3s-agent
@@ -81,24 +75,14 @@
   when: "'eno1' not in item.path"
   notify: Apply netplan
 
-- name: Create bridge netplan config for QEMU VM networking
-  ansible.builtin.copy:
-    dest: /etc/netplan/99-bridge.yaml
-    mode: "0600"
-    content: |
-      network:
-        version: 2
-        bridges:
-          br0:
-            interfaces: []
-            addresses:
-              - 192.168.100.1/24
-            dhcp4: no
-  notify: Apply netplan safely
-
 - name: Clean up k3s container images
   ansible.builtin.shell: k3s crictl rmi --prune
   when: k3s_agent_check.stat.exists or k3s_server_check.stat.exists
+  ignore_errors: yes
+
+- name: Uninstall k3s agent
+  ansible.builtin.command: /usr/local/bin/k3s-agent-uninstall.sh
+  when: k3s_agent_check.stat.exists
   ignore_errors: yes
 
 - name: Remove k3s data directories

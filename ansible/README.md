@@ -46,14 +46,7 @@ cat lspci.txt
 # Should show: GPUs, NVSwitches, InfiniBand NICs, Ethernet NICs, PCIe Switches, NVMe Drives
 ```
 
-### 2. Prepare the node (one-time)
-
-```bash
-# Configure IOMMU, hugepages, GRUB (may require reboot)
-bash gpu-node.sh
-```
-
-### 3. Dry-run the QEMU command
+### 2. Dry-run the QEMU command
 
 ```bash
 # See what QEMU command would be executed without actually starting the VM
@@ -66,13 +59,13 @@ Review the output carefully. Check:
 - All passthrough devices listed (`-device vfio-pci,host=...`)
 - GPU pcie-root-port entries
 
-### 4. Start the VM manually
+### 3. Start the VM manually
 
 ```bash
 bash start.sh --ip 192.168.100.2 --gpu true --fabric true --hostname io-worker-4
 ```
 
-### 5. Verify the VM is running
+### 4. Verify the VM is running
 
 ```bash
 # Check QEMU process
@@ -86,7 +79,7 @@ cat .worker/qemu-worker-vm.pid
 # Then check /proc/<pid>/task/*/comm for CPU threads
 ```
 
-### 6. Verify inside the VM (via Talos)
+### 5. Verify inside the VM (via Talos)
 
 ```bash
 # From a machine with talosctl configured
@@ -96,7 +89,7 @@ talosctl -n 192.168.100.2 dmesg | grep -i nvidia
 talosctl -n 192.168.100.2 dmesg | grep -i nvme
 ```
 
-### 7. Clean up (stop VM, restore devices)
+### 6. Clean up (stop VM, restore devices)
 
 ```bash
 bash clean.sh

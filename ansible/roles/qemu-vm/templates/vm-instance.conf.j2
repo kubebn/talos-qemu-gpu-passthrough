@@ -3,3 +3,4 @@ VM_IP={{ vm_ip }}
 GPU_PASSTHROUGH={{ gpu_passthrough | default(false) | lower }}
 FABRIC={{ fabric | default(false) | lower }}
 VM_HOSTNAME=io-worker-{{ node_id | default(inventory_hostname) }}
+HOST_CPU_RESERVE={{ host_cpu_reserve | default(4) }}

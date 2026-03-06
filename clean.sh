@@ -38,7 +38,7 @@ if [ -f "${DNSMASQ_DIR}/dnsmasq.pid" ]; then
 fi
 
 # Runtime VFIO unbinding — restore GPUs to their original driver
-if [ "$IS_GPU_NODE" = true ] 2>/dev/null || [ -f "${WORKER_DIR}/.gpu_mode" ]; then
+if [ -f "${WORKER_DIR}/.gpu_mode" ]; then
   if [ -f lspci.txt ]; then
     # "All Passthrough Devices (Line Format)" has all addresses on ONE line, space-separated
     ALL_PASSTHROUGH_ADDRESSES=$(awk '/^=== All Passthrough Devices \(Line Format\) ===/ {flag=1; next} /^===/ {flag=0} flag' lspci.txt | xargs)

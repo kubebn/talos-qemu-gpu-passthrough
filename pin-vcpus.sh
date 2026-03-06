@@ -88,16 +88,13 @@ fi
 if [ -d /proc/irq ]; then
     VFIO_IRQS=$(grep vfio /proc/interrupts 2>/dev/null | awk '{print $1}' | tr -d ':')
     if [ -n "$VFIO_IRQS" ]; then
-        # Build CPU mask from VM cores
-        VM_CPU_MASK=0
-        for pcpu in $VM_CPU_LIST; do
-            VM_CPU_MASK=$((VM_CPU_MASK | (1 << pcpu)))
-        done
-        VM_CPU_HEX=$(printf "%x" $VM_CPU_MASK)
+        # Use smp_affinity_list (CPU list format) instead of smp_affinity (bitmask)
+        # to avoid 64-bit overflow with >63 CPUs
+        VM_CPU_LIST_COMMA=$(echo "$VM_CPU_LIST" | tr ' ' ',')
         IRQ_SET=0
         for irq in $VFIO_IRQS; do
-            if [ -f "/proc/irq/$irq/smp_affinity" ]; then
-                echo "$VM_CPU_HEX" | sudo tee "/proc/irq/$irq/smp_affinity" > /dev/null 2>&1
+            if [ -f "/proc/irq/$irq/smp_affinity_list" ]; then
+                echo "$VM_CPU_LIST_COMMA" | sudo tee "/proc/irq/$irq/smp_affinity_list" > /dev/null 2>&1
                 IRQ_SET=$((IRQ_SET + 1))
             fi
         done
